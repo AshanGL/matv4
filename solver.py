@@ -671,14 +671,18 @@ class OlympiadSolver:
     def _init_sandboxes(self):
         from llm import MathSandbox
         from concurrent.futures import ThreadPoolExecutor, as_completed
-        with ThreadPoolExecutor(max_workers=self.cfg.workers) as ex:
-            futs = [ex.submit(MathSandbox, self.cfg.jupyter_timeout)
-                    for _ in range(self.cfg.workers)]
-            for fut in as_completed(futs):
-                try:
-                    self.sandbox_pool.put(fut.result())
-                except Exception as e:
-                    print(f"  Sandbox init warning: {e}")
+     
+        def _try_make_sandbox():
+            try:
+                return MathSandbox(self.cfg.jupyter_timeout)
+            except Exception as e:
+                print(f"  Sandbox init failed ({e}) — will use subprocess fallback")
+                return None  # ← None triggers subprocess fallback in run_code
+ 
+    with ThreadPoolExecutor(max_workers=self.cfg.workers) as ex:
+        futs = [ex.submit(_try_make_sandbox) for _ in range(self.cfg.workers)]
+        for fut in as_completed(futs):
+            self.sandbox_pool.put(fut.result())  # put None if sandbox failed
 
     def _get_forced_type(self, problem: str) -> Optional[str]:
         if self.type_classifier:
@@ -731,7 +735,12 @@ class OlympiadSolver:
         def _attempt(idx):
             sandbox = None
             try:
-                sandbox = self.sandbox_pool.get(timeout=self.cfg.sandbox_timeout)
+                # Use get_nowait; if empty, use None (subprocess fallback)
+                try:
+                    sandbox = self.sandbox_pool.get_nowait()
+                except queue.Empty:
+                    sandbox = None          # ← subprocess fallback, not bail-out
+         
                 dispatcher = ToolDispatcher(db=self.db, sandbox=sandbox)
                 return run_attempt(
                     problem, self.client, dispatcher, self.cfg,
@@ -739,10 +748,8 @@ class OlympiadSolver:
                     stop_event=stop_event,
                     deadline=deadline,
                     forced_type=forced_type,
-                    domain=domain,              # IMPROVEMENT 7
+                    domain=domain,
                 )
-            except queue.Empty:
-                return None
             except Exception as e:
                 print(f"  [attempt {idx}] uncaught: {e}")
                 return None
@@ -753,6 +760,7 @@ class OlympiadSolver:
                     except Exception:
                         pass
                     self.sandbox_pool.put(sandbox)
+                # If sandbox was None (subprocess path), nothing to return to pool
 
         futures = {executor.submit(_attempt, i): i
                    for i in range(self.cfg.attempts)}
