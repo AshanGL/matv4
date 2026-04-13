@@ -36,7 +36,7 @@ DOMAINS = [
 
 DOMAIN_SLUGS = {d: d.lower().replace(" ", "_") for d in DOMAINS}
 
-EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+EMBEDDING_MODEL = "/kaggle/input/models/sumandey008/sentence-transformersall-minilm-l6-v2/transformers/default/1"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -410,7 +410,7 @@ def _embed(texts: list[str], model_name: str) -> np.ndarray:
     from sentence_transformers import SentenceTransformer
     import torch
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    model  = SentenceTransformer(model_name, device=device)
+    model  = SentenceTransformer(model_name, device=device, local_files_only=True)
     embs   = model.encode(texts, normalize_embeddings=True,
                           convert_to_numpy=True, show_progress_bar=False)
     return embs.astype("float32")
