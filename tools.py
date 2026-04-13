@@ -62,7 +62,7 @@ _encoder_lock = threading.Lock()
 _encoder_instance = None
 _encoder_model_name = None
 
-EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+EMBEDDING_MODEL = "/kaggle/input/models/sumandey008/sentence-transformersall-minilm-l6-v2/transformers/default/1"
 
 
 def get_encoder(model_name: str = EMBEDDING_MODEL):
@@ -76,7 +76,7 @@ def get_encoder(model_name: str = EMBEDDING_MODEL):
             import torch
             from sentence_transformers import SentenceTransformer
             device = "cuda" if torch.cuda.is_available() else "cpu"
-            _encoder_instance  = SentenceTransformer(model_name, device=device)
+            _encoder_instance  = SentenceTransformer(model_name, device=device, local_files_only=True)
             _encoder_model_name = model_name
     return _encoder_instance
 
