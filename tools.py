@@ -644,63 +644,57 @@ def _type_consistency_check(atype: str, problem: str) -> bool:
 
 def run_code(
     code:    str,
-    sandbox,                   # MathSandbox instance
+    sandbox,                   # MathSandbox instance OR None
     timeout: float = 10.0,
 ) -> dict:
     """
-    Execute arbitrary Python code in the isolated sandbox kernel.
-
-    The sandbox is pre-loaded with numpy, sympy, math, itertools, fractions.
-    The LLM should always print() results it wants to read back.
-
-    Returns
-    -------
-    {
-      "status":         "ok" | "error",
-      "stdout":         captured output,
-      "stderr":         error / traceback (if any),
-      "has_error":      bool,
-      "execution_time": seconds,
-    }
+    Execute arbitrary Python code.
+    PRIMARY:  Use the MathSandbox Jupyter kernel if available.
+    FALLBACK: Run via subprocess so the sandbox pool being empty never
+              causes every attempt to return None.
     """
-    if sandbox is None:
-        return _err("No sandbox available for run_code",
-                    stdout="", stderr="", has_error=True, execution_time=0.0)
-
+    if sandbox is not None:
+        # Original sandbox path
+        start = time.time()
+        try:
+            output  = sandbox.execute(code)
+            elapsed = time.time() - start
+            has_error = ("[ERROR]" in output or "Traceback" in output or "Error:" in output)
+            if has_error:
+                return {"status": "error", "stdout": "", "stderr": output[:2000],
+                        "has_error": True, "execution_time": round(elapsed, 3)}
+            return _ok(stdout=output[:4000], stderr="", has_error=False,
+                       execution_time=round(elapsed, 3))
+        except Exception as e:
+            return _err(str(e), stdout="", stderr=traceback.format_exc()[:1000],
+                        has_error=True, execution_time=round(time.time() - start, 3))
+ 
+    # ── Fallback: subprocess execution ────────────────────────────────────────
+    import subprocess, sys, tempfile, os
     start = time.time()
     try:
-        output = sandbox.execute(code)   # MathSandbox.execute() handles timeout internally
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.py',
+                                         delete=False) as f:
+            f.write(code)
+            fname = f.name
+        result = subprocess.run(
+            [sys.executable, fname],
+            capture_output=True, text=True, timeout=timeout
+        )
+        os.unlink(fname)
         elapsed = time.time() - start
-
-        has_error = (
-            "[ERROR]" in output or
-            "Traceback" in output or
-            "Error:" in output
-        )
-
-        if has_error:
-            return {
-                "status":         "error",
-                "stdout":         "",
-                "stderr":         output[:2000],
-                "has_error":      True,
-                "execution_time": round(elapsed, 3),
-            }
-        return _ok(
-            stdout=output[:4000],
-            stderr="",
-            has_error=False,
-            execution_time=round(elapsed, 3),
-        )
-
+        if result.returncode != 0:
+            return {"status": "error", "stdout": result.stdout[:2000],
+                    "stderr": result.stderr[:2000], "has_error": True,
+                    "execution_time": round(elapsed, 3)}
+        return _ok(stdout=result.stdout[:4000], stderr="", has_error=False,
+                   execution_time=round(elapsed, 3))
+    except subprocess.TimeoutExpired:
+        return _err(f"Timed out after {timeout}s", stdout="", stderr="",
+                    has_error=True, execution_time=timeout)
     except Exception as e:
-        return _err(
-            str(e),
-            stdout="",
-            stderr=traceback.format_exc()[:1000],
-            has_error=True,
-            execution_time=round(time.time() - start, 3),
-        )
+        return _err(str(e), stdout="", stderr=traceback.format_exc()[:500],
+                    has_error=True, execution_time=round(time.time() - start, 3))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
